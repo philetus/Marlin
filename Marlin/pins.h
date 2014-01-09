@@ -1412,7 +1412,8 @@
 #define Z_STEP_PIN         17
 #define Z_DIR_PIN          19
 #define Z_ENABLE_PIN       18
-#define Z_STOP_PIN          5
+#define Z_MAX_PIN          5
+#define Z_MIN_PIN          11
 #define Z_ATT_PIN          16
 
 #define E0_STEP_PIN        21
