@@ -184,6 +184,7 @@
 CardReader card;
 #endif
 float homing_feedrate[] = HOMING_FEEDRATE;
+float z_probe_offset[] = Z_PROBE_OFFSET;
 bool axis_relative_modes[] = AXIS_RELATIVE_MODES;
 int feedmultiply=100; //100->1 200->2
 int saved_feedmultiply;
@@ -1008,78 +1009,7 @@ static void clean_up_after_endstop_move() {
 }
 
 static void engage_z_probe() {
-    // Engage Z Servo endstop if enabled
-    #ifdef FSR_BED_LEVELING
     return;
-    #endif
-
-    #ifdef SERVO_ENDSTOPS
-    if (servo_endstops[Z_AXIS] > -1) {
-#if defined (ENABLE_AUTO_BED_LEVELING) && (PROBE_SERVO_DEACTIVATION_DELAY > 0)
-        servos[servo_endstops[Z_AXIS]].attach(0);
-#endif
-        servos[servo_endstops[Z_AXIS]].write(servo_endstop_angles[Z_AXIS * 2]);
-#if defined (ENABLE_AUTO_BED_LEVELING) && (PROBE_SERVO_DEACTIVATION_DELAY > 0)
-        delay(PROBE_SERVO_DEACTIVATION_DELAY);
-        servos[servo_endstops[Z_AXIS]].detach();
-#endif
-    }
-    #else // Deploy the Z probe by touching the belt, no servo needed.
-    feedrate = homing_feedrate[X_AXIS];
-  	destination[X_AXIS] = 25;  
-  	destination[Y_AXIS] = 89;
-  	destination[Z_AXIS] = 100;
-    prepare_move_raw();
-
-    feedrate = homing_feedrate[X_AXIS]/10;
-    destination[X_AXIS] = 0;
-    prepare_move_raw();
-    st_synchronize();
-    #endif //SERVO_ENDSTOPS
-}
-
-static void retract_z_probe() {
-    // Retract Z Servo endstop if enabled
-    #ifdef FSR_BED_LEVELING
-    return;
-    #endif
-
-    #ifdef SERVO_ENDSTOPS
-    if (servo_endstops[Z_AXIS] > -1) {
-#if defined (ENABLE_AUTO_BED_LEVELING) && (PROBE_SERVO_DEACTIVATION_DELAY > 0)
-        servos[servo_endstops[Z_AXIS]].attach(0);
-#endif
-        servos[servo_endstops[Z_AXIS]].write(servo_endstop_angles[Z_AXIS * 2 + 1]);
-#if defined (ENABLE_AUTO_BED_LEVELING) && (PROBE_SERVO_DEACTIVATION_DELAY > 0)
-        delay(PROBE_SERVO_DEACTIVATION_DELAY);
-        servos[servo_endstops[Z_AXIS]].detach();
-#endif
-    }
-    #else // Push up the Z probe by moving the end effector, no servo needed.
-    feedrate = homing_feedrate[X_AXIS];
-    destination[Z_AXIS] = current_position[Z_AXIS] + 20;
-    prepare_move_raw();
-
-    destination[X_AXIS] = -57;
-    destination[Y_AXIS] = -69;
-    destination[Z_AXIS] = 10;
-    prepare_move_raw();
-
-    // TODO: Move the nozzle down until the Z probe switch is activated.
-    //enable_endstops(true);
-    //destination[Z_AXIS] = current_position[Z_AXIS] - 30;
-    //enable_endstops(false);
-
-    // Move the nozzle down further to push the probe into retracted position.
-    feedrate = homing_feedrate[Z_AXIS]/10;
-    destination[Z_AXIS] = current_position[Z_AXIS] - 20;
-    prepare_move_raw();
-
-    feedrate = homing_feedrate[Z_AXIS];
-    destination[Z_AXIS] = current_position[Z_AXIS] + 30;
-    prepare_move_raw();
-    st_synchronize();
-    #endif //SERVO_ENDSTOPS
 }
 
 /// Probe bed height at position (x,y), returns the measured z value
@@ -1256,6 +1186,105 @@ static void homeaxis(int axis) {
 void refresh_cmd_timeout(void)
 {
   previous_millis_cmd = millis();
+}
+
+void deploy_z_probe() {
+  feedrate = homing_feedrate[X_AXIS];
+  destination[X_AXIS] = 25;  
+  destination[Y_AXIS] = 89;
+  destination[Z_AXIS] = 100;
+  prepare_move_raw();
+
+  feedrate = homing_feedrate[X_AXIS]/10;
+  destination[X_AXIS] = 0;
+  prepare_move_raw();
+  st_synchronize();
+}
+
+void retract_z_probe() {
+  feedrate = homing_feedrate[X_AXIS];
+  destination[Z_AXIS] = current_position[Z_AXIS] + 20;
+  prepare_move_raw();
+
+  // destination[X_AXIS] = -55;
+ // destination[Y_AXIS] = 63;
+//  destination[Z_AXIS] = 30;
+  destination[X_AXIS] = -57; //## these X,Y,Z values will decide where it will descend to retract the probe.
+  destination[Y_AXIS] = -69;
+  destination[Z_AXIS] = 10;
+  
+  prepare_move_raw();
+
+  // Move the nozzle below the print surface to push the probe up.
+  feedrate = homing_feedrate[Z_AXIS]/10;
+  destination[Z_AXIS] = current_position[Z_AXIS] - 20;
+  prepare_move_raw();
+
+  feedrate = homing_feedrate[Z_AXIS];
+  destination[Z_AXIS] = current_position[Z_AXIS] + 30;
+  prepare_move_raw();
+  st_synchronize();
+}
+
+float z_probe() {
+  feedrate = homing_feedrate[X_AXIS];
+  prepare_move_raw();
+  st_synchronize();
+
+  enable_endstops(true);
+  float start_z = current_position[Z_AXIS];
+  long start_steps = st_get_position(Z_AXIS);
+
+  feedrate = homing_feedrate[Z_AXIS]/10;
+  destination[Z_AXIS] = -20;
+  prepare_move_raw();
+  st_synchronize();
+  endstops_hit_on_purpose();
+
+  enable_endstops(false);
+  long stop_steps = st_get_position(Z_AXIS);
+
+  float mm = start_z -
+    float(start_steps - stop_steps) / axis_steps_per_unit[Z_AXIS];
+  current_position[Z_AXIS] = mm;
+  calculate_delta(current_position);
+  plan_set_position(delta[X_AXIS], delta[Y_AXIS], delta[Z_AXIS],
+		    current_position[E_AXIS]);
+
+  feedrate = homing_feedrate[Z_AXIS];
+  destination[Z_AXIS] = mm+2;
+  prepare_move_raw();
+  return mm;
+}
+
+void calibrate_print_surface(float z_offset) {
+  for (int y = 3; y >= -3; y--) {
+    int dir = y % 2 ? -1 : 1;
+    for (int x = -3*dir; x != 4*dir; x += dir) {
+      if (x*x + y*y < 11) {
+	destination[X_AXIS] = AUTOLEVEL_GRID * x - z_probe_offset[X_AXIS];
+	destination[Y_AXIS] = AUTOLEVEL_GRID * y - z_probe_offset[Y_AXIS];
+	bed_level[x+3][y+3] = z_probe() + z_offset;
+      } else {
+	bed_level[x+3][y+3] = 0.0;
+      }
+    }
+    // For unprobed positions just copy nearest neighbor.
+    if (abs(y) >= 3) {
+      bed_level[1][y+3] = bed_level[2][y+3];
+      bed_level[5][y+3] = bed_level[4][y+3];
+    }
+    if (abs(y) >=2) {
+      bed_level[0][y+3] = bed_level[1][y+3];
+      bed_level[6][y+3] = bed_level[5][y+3];
+    }
+    // Print calibration results for manual frame adjustment.
+    for (int x = -3; x <= 3; x++) {
+      SERIAL_PROTOCOL_F(bed_level[x+3][y+3], 3);
+      SERIAL_PROTOCOLPGM(" ");
+    }
+    SERIAL_ECHOLN("");
+  }
 }
 
 void process_commands()
@@ -1555,191 +1584,23 @@ void process_commands()
       previous_millis_cmd = millis();
       endstops_hit_on_purpose();
       break;
+    
+case 29: // G29 Calibrate print surface with automatic Z probe.
+      saved_feedrate = feedrate;
+      saved_feedmultiply = feedmultiply;
+      feedmultiply = 100;
 
-#ifdef ENABLE_AUTO_BED_LEVELING
-    case 29: // G29 Detailed Z-Probe, probes the bed at 3 or more points.
-        {
-            #if Z_MIN_PIN == -1
-            #error "You must have a Z_MIN endstop in order to enable Auto Bed Leveling feature!!! Z_MIN_PIN must point to a valid hardware pin."
-            #endif
+      deploy_z_probe();
+      calibrate_print_surface(z_probe_offset[Z_AXIS] +
+	(code_seen(axis_codes[Z_AXIS]) ? code_value() : 0.0));
+      retract_z_probe();
 
-            st_synchronize();
-            // make sure the bed_level_rotation_matrix is identity or the planner will get it incorectly
-            //vector_3 corrected_position = plan_get_position_mm();
-            //corrected_position.debug("position before G29");
-            plan_bed_level_matrix.set_to_identity();
+      feedrate = saved_feedrate;
+      feedmultiply = saved_feedmultiply;
+      previous_millis_cmd = millis();
+      endstops_hit_on_purpose();
+      break;
 
-          #ifdef NONLINEAR_BED_LEVELING
-            reset_bed_level();
-          #else
-            vector_3 uncorrected_position = plan_get_position();
-            //uncorrected_position.debug("position durring G29");
-            current_position[X_AXIS] = uncorrected_position.x;
-            current_position[Y_AXIS] = uncorrected_position.y;
-            current_position[Z_AXIS] = uncorrected_position.z;
-            plan_set_position(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS], current_position[E_AXIS]);
-          #endif //NONLINEAR_BED_LEVELING
-
-          #ifndef SERVO_ENDSTOPS
-            engage_z_probe();   // Engage Z probe by moving the end effector.
-          #endif //SERVO_ENDSTOPS
-
-            setup_for_endstop_move();
-
-            feedrate = homing_feedrate[Z_AXIS];
-#ifdef ACCURATE_BED_LEVELING
-            // solve the plane equation ax + by + d = z
-            // A is the matrix with rows [x y 1] for all the probed points
-            // B is the vector of the Z positions
-            // the normal vector to the plane is formed by the coefficients of the plane equation in the standard form, which is Vx*x+Vy*y+Vz*z+d = 0
-            // so Vx = -a Vy = -b Vz = 1 (we want the vector facing towards positive Z
-
-            // "A" matrix of the linear system of equations
-            double eqnAMatrix[ACCURATE_BED_LEVELING_POINTS*ACCURATE_BED_LEVELING_POINTS*3];
-            // "B" vector of Z points
-            double eqnBVector[ACCURATE_BED_LEVELING_POINTS*ACCURATE_BED_LEVELING_POINTS];
-
-            #ifdef NONLINEAR_BED_LEVELING
-            float z_offset = Z_PROBE_OFFSET_FROM_EXTRUDER;
-            if (code_seen(axis_codes[Z_AXIS])) {
-              z_offset += code_value();
-            }
-            #endif //NONLINEAR_BED_LEVELING
-
-            int probePointCounter = 0;
-            for (int yCount=0; yCount < ACCURATE_BED_LEVELING_POINTS; yCount++)
-            {
-              float yProbe = FRONT_PROBE_BED_POSITION + ACCURATE_BED_LEVELING_GRID_Y * yCount;
-              int xStart, xStop, xInc;
-              if (yCount % 2) {
-                xStart = 0;
-                xStop = ACCURATE_BED_LEVELING_POINTS;
-                xInc = 1;
-              } else {
-                xStart = ACCURATE_BED_LEVELING_POINTS - 1;
-                xStop = -1;
-                xInc = -1;
-              }
-
-              for (int xCount=xStart; xCount != xStop; xCount += xInc)
-              {
-                float xProbe = LEFT_PROBE_BED_POSITION + ACCURATE_BED_LEVELING_GRID_X * xCount;
-
-                #ifdef DELTA
-                // Avoid probing the corners (outside the round or hexagon print surface) on a delta printer.
-                float distance_from_center = sqrt(xProbe*xProbe + yProbe*yProbe);
-                if (distance_from_center > DELTA_PROBABLE_RADIUS) continue;
-                #endif //DELTA
-
-                float z_before = probePointCounter == 0 ? Z_RAISE_BEFORE_PROBING :
-                  current_position[Z_AXIS] + Z_RAISE_BETWEEN_PROBINGS;
-                float measured_z = probe_pt(xProbe, yProbe, z_before);
-
-                #ifdef NONLINEAR_BED_LEVELING
-                bed_level[xCount][yCount] = measured_z + z_offset;
-                #endif //NONLINEAR_BED_LEVELING
-
-                eqnBVector[probePointCounter] = measured_z;
-
-                eqnAMatrix[probePointCounter + 0*ACCURATE_BED_LEVELING_POINTS*ACCURATE_BED_LEVELING_POINTS] = xProbe;
-                eqnAMatrix[probePointCounter + 1*ACCURATE_BED_LEVELING_POINTS*ACCURATE_BED_LEVELING_POINTS] = yProbe;
-                eqnAMatrix[probePointCounter + 2*ACCURATE_BED_LEVELING_POINTS*ACCURATE_BED_LEVELING_POINTS] = 1;
-                probePointCounter++;
-
-                manage_heater();
-                manage_inactivity();
-                lcd_update();
-              }
-            }
-            clean_up_after_endstop_move();
-
-          #ifdef NONLINEAR_BED_LEVELING
-            extrapolate_unprobed_bed_level();
-            print_bed_level();
-          #else
-            // solve lsq problem
-            double *plane_equation_coefficients = qr_solve(ACCURATE_BED_LEVELING_POINTS*ACCURATE_BED_LEVELING_POINTS, 3, eqnAMatrix, eqnBVector);
-
-            SERIAL_PROTOCOLPGM("Eqn coefficients: a: ");
-            SERIAL_PROTOCOL(plane_equation_coefficients[0]);
-            SERIAL_PROTOCOLPGM(" b: ");
-            SERIAL_PROTOCOL(plane_equation_coefficients[1]);
-            SERIAL_PROTOCOLPGM(" d: ");
-            SERIAL_PROTOCOLLN(plane_equation_coefficients[2]);
-
-
-            set_bed_level_equation_lsq(plane_equation_coefficients);
-
-            free(plane_equation_coefficients);
-          #endif //NONLINEAR_BED_LEVELING
-
-#else // ACCURATE_BED_LEVELING not defined
-
-
-            // prob 1
-            float z_at_xLeft_yBack = probe_pt(LEFT_PROBE_BED_POSITION, BACK_PROBE_BED_POSITION, Z_RAISE_BEFORE_PROBING);
-
-            // prob 2
-            float z_at_xLeft_yFront = probe_pt(LEFT_PROBE_BED_POSITION, FRONT_PROBE_BED_POSITION, current_position[Z_AXIS] + Z_RAISE_BETWEEN_PROBINGS);
-
-            // prob 3
-            float z_at_xRight_yFront = probe_pt(RIGHT_PROBE_BED_POSITION, FRONT_PROBE_BED_POSITION, current_position[Z_AXIS] + Z_RAISE_BETWEEN_PROBINGS);
-
-            clean_up_after_endstop_move();
-
-            set_bed_level_equation(z_at_xLeft_yFront, z_at_xRight_yFront, z_at_xLeft_yBack);
-
-
-#endif // ACCURATE_BED_LEVELING
-            do_blocking_move_to(MANUAL_X_HOME_POS, MANUAL_Y_HOME_POS, Z_RAISE_AFTER_PROBING);
-            st_synchronize();
-
-          #ifndef SERVO_ENDSTOPS
-            retract_z_probe();   // Retract Z probe by moving the end effector.
-          #endif //SERVO_ENDSTOPS
-
-          #ifndef NONLINEAR_BED_LEVELING
-            // The following code correct the Z height difference from z-probe position and hotend tip position.
-            // The Z height on homing is measured by Z-Probe, but the probe is quite far from the hotend.
-            // When the bed is uneven, this height must be corrected.
-            real_z = float(st_get_position(Z_AXIS))/axis_steps_per_unit[Z_AXIS];  //get the real Z (since the auto bed leveling is already correcting the plane)
-            x_tmp = current_position[X_AXIS] + X_PROBE_OFFSET_FROM_EXTRUDER;
-            y_tmp = current_position[Y_AXIS] + Y_PROBE_OFFSET_FROM_EXTRUDER;
-            z_tmp = current_position[Z_AXIS];
-
-            apply_rotation_xyz(plan_bed_level_matrix, x_tmp, y_tmp, z_tmp);         //Apply the correction sending the probe offset
-            current_position[Z_AXIS] = z_tmp - real_z + current_position[Z_AXIS];   //The difference is added to current position and sent to planner.
-            plan_set_position(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS], current_position[E_AXIS]);
-          #endif //NONLINEAR_BED_LEVELING
-        }
-        break;
-
-    case 30: // G30 Single Z Probe
-        {
-            engage_z_probe(); // Engage Z Servo endstop if available
-
-            st_synchronize();
-            // TODO: make sure the bed_level_rotation_matrix is identity or the planner will get set incorectly
-            setup_for_endstop_move();
-
-            feedrate = homing_feedrate[Z_AXIS];
-
-            run_z_probe();
-            SERIAL_PROTOCOLPGM(MSG_BED);
-            SERIAL_PROTOCOLPGM(" X: ");
-            SERIAL_PROTOCOL(current_position[X_AXIS]);
-            SERIAL_PROTOCOLPGM(" Y: ");
-            SERIAL_PROTOCOL(current_position[Y_AXIS]);
-            SERIAL_PROTOCOLPGM(" Z: ");
-            SERIAL_PROTOCOL(current_position[Z_AXIS]);
-            SERIAL_PROTOCOLPGM("\n");
-
-            clean_up_after_endstop_move();
-
-            retract_z_probe(); // Retract Z Servo endstop if available
-        }
-        break;
-#endif // ENABLE_AUTO_BED_LEVELING
     case 90: // G90
       relative_mode = false;
       break;
